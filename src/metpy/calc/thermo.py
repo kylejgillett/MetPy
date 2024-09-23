@@ -3153,6 +3153,8 @@ def downdraft_cape(pressure, temperature, dewpoint):
     -------
     dcape: `pint.Quantity`
         Downward Convective Available Potential Energy (DCAPE)
+    dcin: `pint.Quantity`
+        Downward Convective Inhibition (DCIN)
     down_pressure: `pint.Quantity`
         Pressure levels of the descending parcel
     down_parcel_trace: `pint.Quantity`
@@ -3190,19 +3192,24 @@ def downdraft_cape(pressure, temperature, dewpoint):
 
     Notes
     -----
-    Formula adopted from [Emanuel1994]_.
+    Formula adopted from [Emanuel1994]_. & [Market2017]_.
 
     .. math:: \text{DCAPE} = -R_d \int_{SFC}^{p_\text{top}}
             (T_{{v}_{env}} - T_{{v}_{parcel}}) d\text{ln}(p)
 
+    .. math:: \text{DCIN} = -R_d \int_{SFC}^{p_\text{z_nb}}
+            (T_{{v}_{env}} - T_{{v}_{parcel}}) d\text{ln}(p)
+
 
     * :math:`DCAPE` is downward convective available potential energy
+    * :math:`DCIN` is downward convective inhibition
     * :math:`SFC` is the level of the surface or beginning of parcel path
     * :math:`p_\text{top}` is pressure of the start of descent path
     * :math:`R_d` is the gas constant
     * :math:`T_{{v}_{env}}` is environment virtual temperature
     * :math:`T_{{v}_{parcel}}` is the parcel virtual temperature
     * :math:`p` is atmospheric pressure
+    * :math:`z_nb` is the height where the downdraft parcel is neutrally buoyant
 
     Only functions on 1D profiles (not higher-dimension vertical cross sections or grids).
     Since this function returns scalar values when given a profile, this will return Pint
@@ -3242,15 +3249,27 @@ def downdraft_cape(pressure, temperature, dewpoint):
                                                       dewpoint[pressure >= parcel_start_p])
 
     # calculate differences (remove units for NumPy)
-    diff = (env_virt_temp - parcel_virt_temp).to(units.degK).magnitude
-    lnp = np.log(down_pressure.magnitude)
-
+    cape_diff = (env_virt_temp - parcel_virt_temp).to(units.degK).magnitude
+    cape_lnp = np.log(down_pressure.magnitude)
+    
+    # calculate CIN differences based on Market et al 2017
+    # find "level of neutral buoyancy" from `cape_diff`
+    # `z_nb` is the closest absolute value to zer0
+    z_nb = np.argmin(np.abs(cape_diff))
+    cin_diff = (env_virt_temp[z_nb:-1] - parcel_virt_temp[z_nb:-1]).to(units.degK).magnitude
+    cin_lnp = np.log(down_pressure[z_nb:-1].magnitude)
+    
     # Find DCAPE
     dcape = -(mpconsts.Rd
-              * units.Quantity(trapezoid(diff, lnp), 'K')
+              * units.Quantity(trapezoid(cape_diff, cape_lnp), 'K')
               ).to(units('J/kg'))
 
-    return dcape, down_pressure, down_parcel_trace
+    # Find DCIN
+    dcin = -(mpconsts.Rd
+              * units.Quantity(trapezoid(cin_diff, cin_lnp), 'K')
+              ).to(units('J/kg'))
+
+    return dcape, dcin, down_pressure, down_parcel_trace
 
 
 @exporter.export
